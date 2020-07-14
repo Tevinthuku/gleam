@@ -5,12 +5,13 @@ mod tests;
 use crate::{
     ast::{
         self, Arg, ArgNames, BinOp, BindingKind, BitStringSegment, BitStringSegmentOption, CallArg,
-        Clause, ClauseGuard, Constant, HasLocation, Pattern, RecordConstructor, SrcSpan, Statement,
-        TypeAst, TypedArg, TypedClause, TypedClauseGuard, TypedConstant, TypedExpr, TypedModule,
-        TypedMultiPattern, TypedPattern, TypedPatternBitStringSegment, TypedStatement,
-        UnqualifiedImport, UntypedArg, UntypedClause, UntypedClauseGuard, UntypedConstant,
-        UntypedConstantBitStringSegment, UntypedExpr, UntypedExprBitStringSegment, UntypedModule,
-        UntypedMultiPattern, UntypedPattern, UntypedPatternBitStringSegment, UntypedStatement,
+        Clause, ClauseGuard, Constant, HasLocation, Pattern, RecordConstructor, RecordUpdateSpread,
+        SrcSpan, Statement, TypeAst, TypedArg, TypedClause, TypedClauseGuard, TypedConstant,
+        TypedExpr, TypedModule, TypedMultiPattern, TypedPattern, TypedPatternBitStringSegment,
+        TypedRecordUpdateArg, TypedStatement, UnqualifiedImport, UntypedArg, UntypedClause,
+        UntypedClauseGuard, UntypedConstant, UntypedConstantBitStringSegment, UntypedExpr,
+        UntypedExprBitStringSegment, UntypedModule, UntypedMultiPattern, UntypedPattern,
+        UntypedPatternBitStringSegment, UntypedRecordUpdateArg, UntypedStatement,
     },
     bit_string::{BinaryTypeSpecifier, Error as BinaryError},
     build::Origin,
@@ -208,6 +209,17 @@ impl FieldMap {
         }
     }
 
+    pub fn get_position(&self, label: &String, location: SrcSpan) -> Result<usize, Error> {
+        match self.fields.get(label) {
+            None => Err(Error::UnknownLabel {
+                location: location,
+                labels: self.fields.keys().map(|t| t.to_string()).collect(),
+                label: label.to_string(),
+            }),
+            Some(p) => Ok(*p),
+        }
+    }
+
     /// Reorder an argument list so that labelled fields supplied out-of-order are in the correct
     /// order.
     ///
@@ -242,30 +254,20 @@ impl FieldMap {
                 }
             };
 
-            let position = match self.fields.get(label) {
-                None => {
-                    return Err(Error::UnknownLabel {
-                        location: location.clone(),
-                        labels: self.fields.keys().map(|t| t.to_string()).collect(),
-                        label: label.to_string(),
-                    })
-                }
-                Some(p) => p,
-            };
-
-            if *position == i {
+            let position = self.get_position(label, location.clone())?;
+            if position == i {
                 continue;
             }
 
-            if seen.contains(position) {
+            if seen.contains(&position) {
                 return Err(Error::DuplicateArgument {
                     location: location.clone(),
                     label: label.to_string(),
                 });
             }
 
-            seen.insert(*position);
-            args.swap(*position, i);
+            seen.insert(position);
+            args.swap(position, i);
         }
         Ok(())
     }
@@ -976,6 +978,14 @@ impl<'a> Typer<'a> {
             UntypedExpr::BitString { location, segments } => {
                 self.infer_bit_string(segments, location)
             }
+
+            UntypedExpr::RecordUpdate {
+                location,
+                module,
+                name,
+                spread,
+                args,
+            } => self.infer_record_update(module, name, spread, args, location),
         }
     }
 
@@ -2278,6 +2288,94 @@ impl<'a> Typer<'a> {
         })
     }
 
+    fn infer_record_update(
+        &mut self,
+        module: Option<String>,
+        name: String,
+        spread: RecordUpdateSpread,
+        args: Vec<UntypedRecordUpdateArg<UntypedExpr>>,
+        location: SrcSpan,
+    ) -> Result<TypedExpr, Error> {
+        // Look up the constructor
+        let constructor = self
+            .get_value_constructor(module.as_ref(), &name)
+            .map_err(|e| convert_get_value_constructor_error(e, &location))?
+            .clone();
+
+        match constructor.clone().variant {
+            ValueConstructorVariant::Record { field_map, .. } => {
+                if let Type::Fn {
+                    args: args_types,
+                    retrn,
+                    ..
+                } = constructor.clone().typ.as_ref()
+                {
+                    let spread = self.infer_var(spread.name, spread.location)?;
+                    self.unify(retrn.clone(), spread.typ())
+                        .map_err(|e| convert_unify_error(e, spread.location()))?;
+
+                    match field_map {
+                        None => {
+                            for arg in args {
+                                return Err(Error::UnexpectedLabelledArg {
+                                    location: arg.location.clone(),
+                                    label: arg.label.to_string(),
+                                });
+                            }
+                        }
+                        Some(field_map) => {
+                            let args: Vec<TypedRecordUpdateArg<TypedExpr>> = args
+                                .iter()
+                                .map(
+                                    |UntypedRecordUpdateArg {
+                                         label,
+                                         value,
+                                         location,
+                                         ..
+                                     }| {
+                                        let value = self.infer(value.clone())?;
+                                        let field_index =
+                                            field_map.get_position(&label, location.clone())?;
+                                        let field_typ = &args_types[field_index];
+
+                                        self.unify(field_typ.clone(), value.typ()).map_err(
+                                            |e| convert_unify_error(e, value.location()),
+                                        )?;
+
+                                        Ok(TypedRecordUpdateArg {
+                                            location: location.clone(),
+                                            label: label.to_string(),
+                                            value,
+                                            index: field_index,
+                                        })
+                                    },
+                                )
+                                .collect::<Result<_, _>>()?;
+
+                            return Ok(TypedExpr::RecordUpdate {
+                                location,
+                                typ: retrn.clone(),
+                                spread: Box::new(spread),
+                                args,
+                            });
+                        }
+                    }
+                }
+
+                return Err(Error::NotFn {
+                    location: location,
+                    typ: constructor.typ,
+                });
+            }
+            _ => {
+                return Err(Error::RecordUpdateInvalidConstructor {
+                    location: location,
+                    name: name,
+                })
+            }
+        }
+    }
+
     /// Instantiate converts generic variables into unbound ones.
     ///
     fn instantiate(
@@ -2740,6 +2838,11 @@ pub enum Error {
 
     RecordAccessUnknownType {
         location: SrcSpan,
+    },
+
+    RecordUpdateInvalidConstructor {
+        location: SrcSpan,
+        name: String,
     },
 
     ConflictingBinaryTypeOptions {

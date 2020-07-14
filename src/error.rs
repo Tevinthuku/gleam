@@ -1155,8 +1155,25 @@ signed, unsigned, big, little, native, size, unit",
                     )
                     .unwrap();
                 }
-            },
 
+                RecordUpdateInvalidConstructor { location, name } => {
+                    let diagnostic = Diagnostic {
+                        title: "Invalid record constructor".to_string(),
+                        label: "This is not a record constructor".to_string(),
+                        file: path.to_str().unwrap().to_string(),
+                        src: src.to_string(),
+                        location: location.clone(),
+                    };
+                    write(buffer, diagnostic, Severity::Error);
+
+                    writeln!(
+                        buffer,
+                        "You are attempting to update a record using {}, but it is not a record constructor.",
+                        name,
+                    )
+                    .unwrap();
+                }
+            },
             Error::Parse { path, src, error } => {
                 use lalrpop_util::ParseError::*;
 

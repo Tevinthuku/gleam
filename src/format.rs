@@ -621,6 +621,9 @@ impl<'a> Formatter<'a> {
                     .iter()
                     .map(|s| bit_string_segment(s, |e| self.expr(e))),
             ),
+            UntypedExpr::RecordUpdate {
+                name, spread, args, ..
+            } => self.record_update(name, spread, args),
         };
         commented(document, comments)
     }
@@ -652,6 +655,21 @@ impl<'a> Formatter<'a> {
             )
             .append(line())
             .append("}")
+    }
+
+    pub fn record_update(
+        &mut self,
+        name: &String,
+        spread: &RecordUpdateSpread,
+        args: &[UntypedRecordUpdateArg<UntypedExpr>],
+    ) -> Document {
+        use std::iter::once;
+        let spread_doc = "..".to_doc().append(spread.clone().name.to_doc());
+        let arg_docs = args.iter().map(|a| self.record_update_arg(a));
+        let all_arg_docs = once(spread_doc).chain(arg_docs);
+        "#".to_doc()
+            .append(name.clone().to_doc())
+            .append(wrap_args(all_arg_docs))
     }
 
     pub fn bin_op(&mut self, name: &BinOp, left: &UntypedExpr, right: &UntypedExpr) -> Document {
@@ -897,6 +915,14 @@ impl<'a> Formatter<'a> {
         .append(self.wrap_expr(&arg.value))
     }
 
+    fn record_update_arg(&mut self, arg: &UntypedRecordUpdateArg<UntypedExpr>) -> Document {
+        arg.label
+            .clone()
+            .to_doc()
+            .append(": ")
+            .append(self.wrap_expr(&arg.value))
+    }
+
     fn tuple_index(&mut self, tuple: &UntypedExpr, index: u64) -> Document {
         match tuple {
             UntypedExpr::TupleIndex { .. } => self.expr(tuple).surround("{", "}"),
@@ -919,7 +945,8 @@ impl<'a> Formatter<'a> {
             | UntypedExpr::Fn { .. }
             | UntypedExpr::Case { .. }
             | UntypedExpr::Tuple { .. }
-            | UntypedExpr::BitString { .. } => self.expr(expr),
+            | UntypedExpr::BitString { .. }
+            | UntypedExpr::RecordUpdate { .. } => self.expr(expr),
 
             _ => self.expr(expr).nest(INDENT),
         }

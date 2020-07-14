@@ -105,6 +105,14 @@ pub enum UntypedExpr {
         location: SrcSpan,
         segments: Vec<UntypedExprBitStringSegment>,
     },
+
+    RecordUpdate {
+        location: SrcSpan,
+        module: Option<String>,
+        name: String,
+        spread: RecordUpdateSpread,
+        args: Vec<UntypedRecordUpdateArg<Self>>,
+    },
 }
 
 impl UntypedExpr {
@@ -128,6 +136,7 @@ impl UntypedExpr {
             Self::TupleIndex { location, .. } => location,
             Self::FieldAccess { location, .. } => location,
             Self::BitString { location, .. } => location,
+            Self::RecordUpdate { location, .. } => location,
         }
     }
 

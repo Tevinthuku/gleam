@@ -1897,6 +1897,66 @@ pub fn get(x: One) { x.name }",
             ("test_tuple", "tuple(String, Int)"),
         ],
     );
+
+    // No arguments given to a record update
+    assert_infer!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub fn identity(person: Person) {
+            #Person(..person)
+        }",
+        vec![
+            ("Person", "fn(String, Int) -> Person"),
+            ("identity", "fn(Person) -> Person")
+        ]
+    );
+
+    // Some arguments given to a record update
+    assert_infer!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub fn update_name(person: Person, name: String) {
+            #Person(..person, name: name)
+        }",
+        vec![
+            ("Person", "fn(String, Int) -> Person"),
+            ("update_name", "fn(Person, String) -> Person")
+        ]
+    );
+
+    // All arguments given in order to a record update
+    assert_infer!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub fn update_person(person: Person, name: String, age: Int) {
+            #Person(..person, name: name, age: age, )
+        }",
+        vec![
+            ("Person", "fn(String, Int) -> Person"),
+            ("update_person", "fn(Person, String, Int) -> Person")
+        ]
+    );
+
+    // All arguments given out of order to a record update
+    assert_infer!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub fn update_person(person: Person, name: String, age: Int) {
+            #Person(..person, age: age, name: name)
+        }",
+        vec![
+            ("Person", "fn(String, Int) -> Person"),
+            ("update_person", "fn(Person, String, Int) -> Person")
+        ]
+    );
 }
 
 #[test]
@@ -2611,6 +2671,97 @@ fn main() {
             location: SrcSpan { start: 17, end: 20 },
             expected: int(),
             given: float(),
+        },
+    );
+
+    // A variable of the wrong type given to a record update
+    assert_error!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub type Box(a) {
+            Box(a)
+        };
+        pub fn update_person(person: Person, box: Box(a)) {
+            #Person(..box)
+        }",
+        Error::CouldNotUnify {
+            location: SrcSpan {
+                start: 217,
+                end: 222
+            },
+            expected: Arc::new(Type::App {
+                public: true,
+                module: vec!["my_module".to_string()],
+                name: "Person".to_string(),
+                args: vec![]
+            }),
+            given: Arc::new(Type::App {
+                public: true,
+                module: vec!["my_module".to_string()],
+                name: "Box".to_string(),
+                args: vec![Arc::new(Type::Var {
+                    typ: Arc::new(RefCell::new(TypeVar::Generic { id: 9 })),
+                })]
+            }),
+        },
+    );
+
+    // An undefined variable given to a record update
+    assert_error!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub fn update_person() {
+            #Person(..person)
+        }",
+        Error::UnknownVariable {
+            location: SrcSpan {
+                start: 134,
+                end: 142
+            },
+            name: "person".to_string(),
+            variables: env_vars_with(&["Person", "update_person"]),
+        },
+    );
+
+    // An unknown label given to a record update
+    assert_error!(
+        "
+        pub type Person {
+            Person(name: String)
+        };
+        pub fn update_person(person: Person) {
+            #Person(..person, foo: 5)
+        }",
+        Error::UnknownLabel {
+            location: SrcSpan {
+                start: 148,
+                end: 154
+            },
+            label: "foo".to_string(),
+            labels: vec!["name".to_string()]
+        },
+    );
+
+    // An unknown record constructor being usde in a record update
+    assert_error!(
+        "
+        pub type Person {
+            Person(name: String, age: Int)
+        };
+        pub fn update_person(person: Person) {
+            #NotAPerson(..person)
+        }",
+        Error::UnknownVariable {
+            location: SrcSpan {
+                start: 140,
+                end: 161
+            },
+            name: "NotAPerson".to_string(),
+            variables: env_vars_with(&["Person", "update_person", "person"]),
         },
     );
 }

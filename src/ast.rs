@@ -328,6 +328,27 @@ pub struct CallArg<A> {
     pub value: A,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct RecordUpdateSpread {
+    pub name: String,
+    pub location: SrcSpan,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct UntypedRecordUpdateArg<A> {
+    pub label: String,
+    pub location: SrcSpan,
+    pub value: A,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct TypedRecordUpdateArg<A> {
+    pub label: String,
+    pub location: SrcSpan,
+    pub value: A,
+    pub index: usize,
+}
+
 pub type MultiPattern<PatternConstructor, Type> = Vec<Pattern<PatternConstructor, Type>>;
 
 pub type UntypedMultiPattern = MultiPattern<(), ()>;
